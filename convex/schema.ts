@@ -16,13 +16,14 @@ const applicationTables = {
     campaignId: v.id("campaigns"),
     totalVotes: v.number(),
     totalContributions: v.number(),
-  }).index("byCampaign", ["campaignId"]),
+  }).index("byCampaign", ["campaignId", "userId"]).index("byUser", ["userId", "campaignId"]),
   campaignProgress: defineTable({
     campaignId: v.id("campaigns"),
     totalPlayer: v.number(),
     currentStep: v.number(),
     targetScore: v.number(),
     currentScore: v.number(),
+    status: v.union(v.literal("pending"), v.literal("resolved"), v.literal("voting")),
   }).index("byCampaign", ["campaignId"]),
   campaignSteps: defineTable({
     campaignId: v.id("campaigns"),
@@ -32,7 +33,10 @@ const applicationTables = {
       id: v.number(),
       option: v.string(),
       value: v.number(),
-    }))
+    })),
+    selectedOptionId: v.optional(v.number()),
+    selectedCount: v.optional(v.number()),
+    status: v.union(v.literal("pending"), v.literal("resolved"), v.literal("voting")),
   }).index("byCampaign", ["campaignId", "step"]),
   campaignVotes: defineTable({
     userId: v.id("users"),

@@ -15,6 +15,7 @@ import type {
 } from "convex/server";
 import type * as auth from "../auth.js";
 import type * as campaigns from "../campaigns.js";
+import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 
 /**
@@ -28,6 +29,7 @@ import type * as http from "../http.js";
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   campaigns: typeof campaigns;
+  crons: typeof crons;
   http: typeof http;
 }>;
 export declare const api: FilterApi<

@@ -1,9 +1,19 @@
-import { query, internalMutation, internalAction } from "./_generated/server";
-import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { query, internalMutation, internalAction, MutationCtx, QueryCtx, mutation } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import { api, internal } from "./_generated/api";
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateObject } from 'ai'
 import * as z from 'zod'
+import { getAuthUserId } from "@convex-dev/auth/server";
+
+const VOTE_TIME = 60000;
+
+export const isAuthenticatedMiddleware = async (ctx: MutationCtx | QueryCtx) => {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) throw new ConvexError("Not authenticated");
+
+  return userId;
+};
 
 export function shuffleArray<T>(array: T[]): T[] {
   for (let i = array.length - 1; i > 0; i--) {
@@ -12,6 +22,8 @@ export function shuffleArray<T>(array: T[]): T[] {
   }
   return array;
 }
+
+export const difficulty = ["easy", "medium", "hard"];
 
 export const diffcultyTargetScore = {
   easy: 10,
@@ -28,7 +40,7 @@ const model = google('gemini-2.0-flash-001', {
   structuredOutputs: false,
 });
 
-// List all campaigns
+// campaigns
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -36,10 +48,18 @@ export const list = query({
   },
 });
 
-export const getAllCampaign = query({
+export const getCampaignHistory = query({
   args: {},
   handler: async (ctx) => {
     const campaigns = await ctx.db.query("campaigns").collect();
+    return campaigns
+  },
+});
+
+export const getAllCampaign = query({
+  args: {},
+  handler: async (ctx) => {
+    const campaigns = await ctx.db.query("campaigns").order("desc").collect();
     return await Promise.all(campaigns.map(async (campaign) => {
       const progress = await ctx.db.query("campaignProgress").withIndex("byCampaign", (q) => q.eq("campaignId", campaign._id)).first();
       return {
@@ -52,13 +72,18 @@ export const getAllCampaign = query({
 
 export const generateCampaign = internalAction({
   handler: async (ctx) => {
-    const prompt = ` 
-      You are a campaign generator. Generate a campaign with a name, theme, and difficulty level. 
-      - randomly choose a difficulty level: easy, medium, or hard, on 'difficulty' field
-      - randomly choose a theme/genre: 3-4 words, on 'theme' field
+
+    const prevCampaigns = await ctx.runQuery(api.campaigns.getCampaignHistory);
+    const randomDifficulty = difficulty[Math.floor(Math.random() * difficulty.length)];
+    const prompt = `
+    Previous Campaigns:
+    ${prevCampaigns.map(c => `Name: ${c.name}, Theme: ${c.theme.join(', ')}, Difficulty: ${c.difficulty}`).join('\n')}
+    
+      You are a campaign generator. Generate a campaign with a name, theme with ${randomDifficulty} difficulty. 
+      - for theme: Use established, recognizable genres such as "High Fantasy," "Cyberpunk," "Space Opera," "Horror," "Western," "Steampunk," etc. Do NOT create complex combinations or invented genres.
       - generate name based on the theme/genre generated on 'name' field
-      - generate a short background story / trailer about campaign on 'background' field
-      - for first campaign generation, please create a plot to starting the campaign on 'plot' field
+      - generate a short background story about campaign on 'background' field
+      - for first campaign generation, please create a plot to starting the campaign, please keep plot short up to 3 sentences max on 'plot' field
       - for first campaign generation, please create 3 options path for campaign on 'options' field
       - 3 options should be different and cover different aspect of campaign
       - please give each options a value, to track the progress, give value (-1, 0 , 1) , please do not duplicate the value for other options
@@ -71,22 +96,22 @@ export const generateCampaign = internalAction({
         background: z.string(),
         plot: z.string(),
         theme: z.array(z.string()),
-        difficulty: z.union([z.literal("easy"), z.literal("medium"), z.literal("hard")]),
         options: z.array(z.object({
           option: z.string(),
           value: z.number(),
         }))
       }),
       maxRetries: 3,
-      prompt: prompt
+      prompt: prompt,
     })
 
     await ctx.runMutation(internal.campaigns.createCampaign, {
       name: result.object.name,
       theme: result.object.theme,
-      difficulty: result.object.difficulty,
+      difficulty: randomDifficulty as "easy" | "medium" | "hard",
       options: result.object.options,
       plot: result.object.plot,
+      background: result.object.background,
     });
   },
 })
@@ -101,15 +126,16 @@ export const createCampaign = internalMutation({
       value: v.number(),
     })),
     plot: v.string(),
+    background: v.string(),
   },
-  handler: async (ctx, { name, theme, difficulty, options, plot }) => {
+  handler: async (ctx, { name, theme, difficulty, options, plot, background }) => {
     const campaignId = await ctx.db.insert("campaigns", {
       name,
       theme,
       difficulty,
       isFinished: false,
       deadlineDate: Date.now() + 60 * 1000,
-      background: '',
+      background,
     });
 
     await ctx.db.insert("campaignProgress", {
@@ -118,6 +144,7 @@ export const createCampaign = internalMutation({
       currentStep: 1,
       targetScore: diffcultyTargetScore[difficulty],
       currentScore: 0,
+      status: "voting",
     });
     const randomedOptions = shuffleArray(options).map((option, index) => ({
       id: index + 1,
@@ -125,12 +152,300 @@ export const createCampaign = internalMutation({
       value: option.value,
     }));
 
-    await ctx.db.insert("campaignSteps", {
+    const campaignStepId = await ctx.db.insert("campaignSteps", {
       campaignId,
       plot,
       step: 1,
       options: randomedOptions,
+      status: "voting",
     })
+
+    await ctx.scheduler.runAfter(VOTE_TIME, internal.campaigns.resolveStep, { campaignStepId });
   },
 })
 
+// campaign steps
+export const getCampaignSteps = query({
+  args: {
+    campaignId: v.id("campaigns"),
+  },
+  handler: async (ctx, { campaignId }) => {
+    return await ctx.db.query("campaignSteps").withIndex("byCampaign", (q) => q.eq("campaignId", campaignId)).collect();
+  },
+})
+
+export const generateCampaignStep = internalAction({
+  args:{
+    campaignId: v.id("campaigns"),
+    campaignName: v.string(),
+    campaignTheme: v.array(v.string()),
+    campaignDifficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
+    campaignScore: v.number(),
+    campaignTargetScore: v.number(),
+    campaignBackground: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const prevCampaigns = await ctx.runQuery(api.campaigns.getCampaignSteps, { campaignId: args.campaignId });
+
+    const prompt = `
+    You are a campaign story generator of the campaign
+
+    Campaign Name: ${args.campaignName},
+    Campaign Theme: ${args.campaignTheme.join(', ')},
+    Campaign Difficulty: ${args.campaignDifficulty},
+    Campaign Current Score: ${args.campaignScore},
+    Campaign Target Score: ${args.campaignTargetScore},
+    Campaign Background: ${args.campaignBackground},
+
+    Previous Plot:
+    ${prevCampaigns.map(c => `Step ${c.step}: ${c.plot}, Selected option : ${c.options.find(o => o.id === c.selectedOptionId)?.option || ''}`).join('\n')}
+    
+    Generate :
+      - please create a plot to continue the campaign, please keep plot short up to 3 sentences max on 'plot' field
+      - please create 3 options path for campaign on 'options' field
+      - 3 options should be different and cover different aspect of campaign
+      - please give each options a value, to track the progress, give value (-1, 0 , 1) , please do not duplicate the value for other options
+    `
+
+    const result = await generateObject({
+      model: model,
+      schema: z.object({
+        plot: z.string(),
+        options: z.array(z.object({
+          option: z.string(),
+          value: z.number(),
+        }))
+      }),
+      maxRetries: 3,
+      prompt: prompt,
+    })
+
+    await ctx.runMutation(internal.campaigns.continueCampaignStep, {
+      campaignId: args.campaignId,
+      options: result.object.options,
+      plot: result.object.plot,
+    });
+  },
+})
+
+export const continueCampaignStep = internalMutation({
+  args: {
+    campaignId: v.id("campaigns"),
+    options: v.array(v.object({
+      option: v.string(),
+      value: v.number(),
+    })),
+    plot: v.string(),
+  },
+  handler: async (ctx, { campaignId, options, plot }) => {
+    const campaign = await ctx.db.get(campaignId);
+    if (!campaign) throw new ConvexError("Campaign not found");
+    if(campaign.isFinished) throw new ConvexError("Campaign is finished");
+    const campaignProgress = await ctx.db.query("campaignProgress").withIndex("byCampaign", (q) => q.eq("campaignId", campaignId)).first();
+    if (!campaignProgress) throw new ConvexError("Campaign progress not found");
+
+    await ctx.db.patch(campaignProgress._id, {
+      currentStep: campaignProgress.currentStep + 1,
+      status: "voting",
+    })
+
+    const randomedOptions = shuffleArray(options).map((option, index) => ({
+      id: index + 1,
+      option: option.option,
+      value: option.value,
+    }));
+
+    const campaignStepId = await ctx.db.insert("campaignSteps", {
+      campaignId,
+      plot,
+      step: campaignProgress.currentStep + 1,
+      options: randomedOptions,
+      status: "voting",
+    })
+    await ctx.scheduler.runAfter(VOTE_TIME, internal.campaigns.resolveStep, { campaignStepId });
+  },
+})
+
+// campaign votes
+export const getRecentVotes = query({
+  args: {
+    campaignId: v.id("campaigns"),
+  },
+  handler: async (ctx, { campaignId }) => {
+    const latestStep = await ctx.db.query("campaignSteps").withIndex("byCampaign", (q) => q.eq("campaignId", campaignId)).first();
+    if (!latestStep) throw new ConvexError("Campaign not found");
+    return await ctx.db.query("campaignVotes").withIndex("byCampaignStep", (q) => q.eq("campaignStepId", latestStep._id)).collect();
+  },
+})
+
+// resolve step
+export const resolveStep = internalMutation({
+  args: {
+    campaignStepId: v.id("campaignSteps"),
+  },
+  handler: async (ctx, { campaignStepId }) => {
+    const step = await ctx.db.get(campaignStepId);
+    if (!step) throw new ConvexError("Campaign step not found");
+    if (step.status !== "voting") throw new ConvexError("Campaign step is not in voting state");
+    const campaign = await ctx.db.get(step.campaignId);
+    if (!campaign) throw new ConvexError("Campaign not found");
+    if(campaign.isFinished) throw new ConvexError("Campaign is finished");
+    const campaignProgress = await ctx.db.query("campaignProgress").withIndex("byCampaign", (q) => q.eq("campaignId", campaign._id)).first();
+    if (!campaignProgress) throw new ConvexError("Campaign progress not found");
+    const votes = await ctx.db.query("campaignVotes").withIndex("byCampaignStep", (q) => q.eq("campaignStepId", campaignStepId)).collect();
+    // if no vote, set status to pending
+    if(votes.length === 0){
+      await ctx.db.patch(campaignStepId, {
+        status: "pending",
+      });
+      await ctx.db.patch(campaignProgress._id, {
+        status: "pending",
+      });
+      return "Vote not found, set progress to pending"
+    }
+    
+    let selectedCount : {[key: number]: number} = {}
+
+    votes.map((vote) => {
+      if (!selectedCount[vote.selectedOptionId]) {
+        selectedCount[vote.selectedOptionId] = 0;
+      }
+      selectedCount[vote.selectedOptionId]++;
+    })
+
+    const selectedOptionId = Object.keys(selectedCount).reduce((a, b) => selectedCount[Number(a)] > selectedCount[Number(b)] ? a : b);
+    const selectedOption = step.options.find(option => option.id === Number(selectedOptionId));
+    if (!selectedOption) throw new ConvexError("Selected option not found");
+    
+    // update campaign step if vote resolved
+    await ctx.db.patch(campaignStepId, {
+      status: "resolved",
+      selectedOptionId: Number(selectedOptionId),
+      selectedCount: selectedCount[Number(selectedOptionId)],
+    });
+    // update campaign progress
+    await ctx.db.patch(campaignProgress._id, {
+      status: "resolved",
+      currentScore: campaignProgress.currentScore + selectedOption.value,
+    });
+    // update campaign users
+    const allUsers = await ctx.db.query("campaignUsers").withIndex("byCampaign", (q) => q.eq("campaignId", campaign._id)).collect();
+    await Promise.all(allUsers.map(async (user) => {
+      await ctx.db.patch(user._id, {
+        totalContributions: user.totalContributions + selectedOption.value,
+        totalVotes: user.totalVotes + 1,
+      });
+    }));
+    // if current score + selected option value >= target score, set campaign to finished
+    if(campaignProgress.currentScore + selectedOption.value >= campaignProgress.targetScore){
+      await ctx.db.patch(campaign._id, {
+        isFinished: true,
+      });
+    }else{
+      await ctx.scheduler.runAfter(0, internal.campaigns.generateCampaignStep, 
+        { 
+          campaignId: campaign._id, 
+          campaignName: campaign.name, 
+          campaignTheme: campaign.theme, 
+          campaignDifficulty: campaign.difficulty, 
+          campaignScore: campaignProgress.currentScore, 
+          campaignTargetScore: campaignProgress.targetScore, 
+          campaignBackground: campaign.background 
+        }
+      );
+    }
+    
+    return "Vote resolved";
+  },
+})
+
+// campaign user
+
+export const getCampaignUser = query({
+  handler: async (ctx) => {
+    const userId = await isAuthenticatedMiddleware(ctx);
+    return await ctx.db.query("campaignUsers").withIndex("byUser", (q) => q.eq("userId", userId)).collect();
+  },
+});
+
+export const userJoinCampaign = mutation({
+  args: {
+    campaignId: v.id("campaigns"),
+  },
+  handler: async (ctx, { campaignId }) => {
+    const userId = await isAuthenticatedMiddleware(ctx);
+    const campaign = await ctx.db.get(campaignId);
+    if (!campaign) throw new ConvexError("Campaign not found");
+    if (campaign.isFinished) throw new ConvexError("Campaign is finished");
+    const campaignUser = await ctx.db.query("campaignUsers").withIndex("byCampaign", (q) => q.eq("campaignId", campaignId).eq("userId", userId)).first();
+    if (campaignUser) throw new ConvexError("User already joined campaign");
+    const campaignProgress = await ctx.db.query("campaignProgress").withIndex("byCampaign", (q) => q.eq("campaignId", campaignId)).first();
+    if (!campaignProgress) throw new ConvexError("Campaign progress not found");
+
+    await ctx.db.patch(campaignProgress._id, {
+      totalPlayer: campaignProgress.totalPlayer + 1,
+    })
+
+    await ctx.db.insert("campaignUsers", {
+      campaignId,
+      userId,
+      totalContributions: 0,
+      totalVotes: 0,
+    });
+
+    return "Successfully joined campaign";
+  },
+})
+
+//campaign vote
+
+export const getVotesStep = query({
+  args: {
+    campaignStepId: v.id("campaignSteps"),
+  },
+  handler: async (ctx, { campaignStepId }) => {
+    await isAuthenticatedMiddleware(ctx);
+    return await ctx.db.query("campaignVotes").withIndex("byCampaignStep", (q) => q.eq("campaignStepId", campaignStepId)).collect();
+  }
+})
+
+export const selectVoteStep = mutation({
+  args: {
+    campaignStepId: v.id("campaignSteps"),
+    optionId: v.number(),
+  },
+  handler: async (ctx, { campaignStepId, optionId }) => {
+    const userId = await isAuthenticatedMiddleware(ctx);
+    const campaignStep = await ctx.db.get(campaignStepId);
+    if (!campaignStep) throw new ConvexError("Campaign step not found");
+    const campaign = await ctx.db.get(campaignStep.campaignId);
+    if (!campaign) throw new ConvexError("Campaign not found");
+    if (campaign.isFinished) throw new ConvexError("Campaign is finished");
+    const campaignProgress = await ctx.db.query("campaignProgress").withIndex("byCampaign", (q) => q.eq("campaignId", campaign._id)).first();
+    if (!campaignProgress) throw new ConvexError("Campaign progress not found");
+    const campaignUser = await ctx.db.query("campaignUsers").withIndex("byCampaign", (q) => q.eq("campaignId", campaign._id).eq('userId', userId)).first();
+    if (!campaignUser) throw new ConvexError("User not found");
+    const campaignVote = await ctx.db.query("campaignVotes").withIndex("byCampaignStep", (q) => q.eq("campaignStepId", campaignStepId).eq("userId", userId)).first();
+    if (campaignVote) throw new ConvexError("User already voted");
+    const campaignStepOptions = campaignStep.options.find(option => option.id === optionId);
+    if (!campaignStepOptions) throw new ConvexError("Option not found");
+    await ctx.db.insert("campaignVotes", {
+      campaignUserId: campaignUser._id,
+      campaignStepId,
+      selectedOptionId: campaignStepOptions.id,
+      userId,
+    });
+
+    if(campaignStep.status === "pending"){
+      await ctx.db.patch(campaignStepId, {
+        status: "voting",
+      })
+      await ctx.scheduler.runAfter(0, internal.campaigns.resolveStep, { campaignStepId });
+    }else{
+      await ctx.db.patch(campaignUser._id, {
+        totalVotes: campaignUser.totalVotes + 1,
+      });
+    }
+    return "Successfully voted";
+  },
+});
