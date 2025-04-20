@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Id } from "../../convex/_generated/dataModel";
 
 type CampaignCardProps = {
@@ -15,6 +15,8 @@ type CampaignCardProps = {
   onSelect: (id: Id<"campaigns">) => void;
   isUserInCampaign: boolean;
   isFinished: boolean;
+  endingStory: string | undefined;
+  backgroundStory: string | undefined;
 };
 
 export function CampaignCard({
@@ -30,19 +32,25 @@ export function CampaignCard({
   createdAt,
   onSelect,
   isUserInCampaign,
-  isFinished
+  isFinished,
+  endingStory,
+  backgroundStory
 }: CampaignCardProps) {
+
+  const [showRecapModal, setShowRecapModal] = useState(false);
+  const isUserFinishedCampaign = isFinished && isUserInCampaign;
   return (
     <div
-      className={`bg-yellow-50 border-2 border-yellow-400 rounded-xl p-3 mb-6 shadow-lg cursor-pointer hover:shadow-xl hover:bg-yellow-100 transition-all group`}
-      onClick={() => onSelect(id)}
+      className={`bg-yellow-50 border-2 border-yellow-400 rounded-xl p-3 pb-1 shadow-lg cursor-pointer hover:shadow-xl hover:bg-yellow-100 transition-all group`}
     >
       {/* Header: Name and Status */}
-      <div className="flex justify-between items-center mb-2">
+      <div className="flex justify-between items-start mb-2 gap-2">
         <h2 className="text-2xl font-bold text-yellow-900 group-hover:text-yellow-700 transition-colors">{name}</h2>
-        <span className={`capitalize px-3 py-1 text-sm rounded-full font-semibold border-2 ${status === "pending" ? "bg-yellow-100 text-yellow-800 border-yellow-400" : status === "voting" ? "bg-green-100 text-green-800 border-green-400" : "bg-red-100 text-red-800 border-red-400"}`}>
+        {isFinished ? <span className={`capitalize px-3 py-1 text-sm rounded-full font-semibold border-2 bg-blue-100 text-blue-800 border-blue-400`}>
+          Finished
+        </span> : <span className={`capitalize px-3 py-1 text-sm rounded-full font-semibold border-2 ${status === "pending" ? "bg-yellow-100 text-yellow-800 border-yellow-400" : status === "voting" ? "bg-green-100 text-green-800 border-green-400" : "bg-red-100 text-red-800 border-red-400"}`}>
           {status}
-        </span>
+        </span>}
       </div>
 
       {/* Themes as badges */}
@@ -62,7 +70,7 @@ export function CampaignCard({
       </div>
 
       {/* Info grid */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-4 mb-3">
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 mb-3">
         <div>
           <div className="text-xs text-yellow-700">Difficulty</div>
           <span
@@ -105,14 +113,52 @@ export function CampaignCard({
             ></div>
           </div>
         </div>
-        <button
-          className="mt-3 md:mt-0 md:ml-4 px-4 py-2 bg-yellow-300 hover:bg-yellow-400 text-yellow-900 font-semibold rounded-lg border border-yellow-500 transition-all shadow group-hover:shadow-md whitespace-nowrap"
-          onClick={e => { e.stopPropagation(); onSelect(id); }}
-          disabled={isFinished}
-        >
-          {isFinished ? "Campaign Finished" : isUserInCampaign ? "Continue Campaign" : "Join Campaign"}
-        </button>
+        <div className="flex flex-col md:flex-row md:items-center md:gap-3 md:min-w-[380px]">
+          {(isUserFinishedCampaign || !isFinished) && <button
+            className="w-full mt-3 md:mt-0 px-4 py-2 bg-yellow-300 hover:bg-yellow-400 text-yellow-900 font-semibold rounded-lg border border-yellow-500 transition-all shadow group-hover:shadow-md whitespace-nowrap disabled:opacity-75 disabled:pointer-events-none"
+            onClick={e => {
+              e.stopPropagation();
+              onSelect(id);
+            }}
+            disabled={isFinished && !isUserFinishedCampaign}
+          >
+            {isUserFinishedCampaign ? "See Recap" : isFinished ? "Campaign Finished" : isUserInCampaign ? "Continue Campaign" : "Join Campaign"}
+          </button>}
+          {<button onClick={() => setShowRecapModal(true)} className="w-full mt-3 md:mt-0 px-4 py-2 bg-yellow-50 hover:bg-yellow-200 text-yellow-900 font-semibold rounded-lg border border-yellow-600 transition-all shadow group-hover:shadow-md whitespace-nowrap">{isFinished ? 'See Ending Story' : 'See Background Story'}</button>}
+        </div>
       </div>
+
+      {/* Recap Modal Popup */}
+      {showRecapModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 overflow-auto">
+          <div className="bg-white rounded-xl shadow-2xl p-6 md:p-8 w-[95%] max-w-md relative">
+            <button
+              className="absolute top-3 right-6 text-gray-500 hover:text-gray-800 text-xl font-bold"
+              onClick={() => setShowRecapModal(false)}
+              aria-label="Close"
+            >
+              &times;
+            </button>
+            <h3 className="text-xl font-bold mb-4 text-yellow-900">{isFinished ? 'Campaign Completed' : 'Campaign Background'}</h3>
+            <div className="text-yellow-800 mb-4">
+              <h2 className="text-lg font-semibold mb-2">Background Story :</h2>
+              <p className="text-yellow-900">{backgroundStory}</p>
+            </div>
+            <div className="text-yellow-800 mb-4">
+              {isFinished && <h2 className="text-lg font-semibold mb-2">Ending Story :</h2>}
+              <p className="text-yellow-900">{isFinished ? endingStory : backgroundStory}</p>
+            </div>
+            
+            <button
+              className="mt-2 px-4 py-2 bg-yellow-300 hover:bg-yellow-400 text-yellow-900 font-semibold rounded-lg border border-yellow-500 transition-all"
+              onClick={() => setShowRecapModal(false)}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -18,7 +18,8 @@ type CampaignDataType = Doc<"campaigns"> & {
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const { signOut } = useAuthActions();
-  const { isAuthenticated } = useConvexAuth();
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const userData = useQuery(api.auth.loggedInUser, isAuthenticated ? {} : 'skip');
   const [selectedCampaign, setSelectedCampaign] = useState<Id<"campaigns"> | null>(null);
 
   // Countdown timer logic
@@ -50,11 +51,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, [campaigns]);
 
+  if(isLoading) return <div>Loading...</div>;
+
+  if(!isAuthenticated && !isLoading) return <SignInForm />;
+  
+  if(isAuthenticated && !isLoading && userData && !userData.name) return <NameForm />;
+
   return (
     <div className="min-h-screen flex flex-col overflow-hidden">
       {isAuthenticated && countdown && !selectedCampaign && (
         <div className="w-full bg-yellow-200 text-yellow-900 text-center font-semibold py-2 border-b border-yellow-400">
-          Next campaign can be added in: <span className="font-mono">{countdown}</span>
+          New campaign will be added in: <span className="font-mono">{countdown}</span>
         </div>
       )}
       {isAuthenticated && <header className="sticky top-0 z-10 bg-yellow-900/90 backdrop-blur-sm p-1 md:p-3 md:px-8 flex justify-between items-center border-b border-yellow-700">
@@ -89,7 +96,7 @@ export default function App() {
           style={{ minHeight: '100vh' }}
         >
           <div className="mb-8 flex justify-between items-center">
-            <span className="font-bold text-yellow-900 text-lg">Sidebar</span>
+            <span className="font-bold text-yellow-900 text-lg">Pathbound</span>
             <button
               className="p-1 rounded hover:bg-yellow-300"
               onClick={() => setSidebarOpen(false)}
@@ -107,9 +114,9 @@ export default function App() {
           </nav>
         </aside>
         {/* Main content */}
-        <main className={cn("flex-1 flex items-start justify-center p-2 md:p-8 h-[calc(100vh-112px)] overflow-auto", selectedCampaign && "h-[calc(100vh-74px)]")}>
+        <main className={cn("flex-1 flex items-start justify-center p-2 md:p-8 h-[calc(100vh-92px)] md:h-[calc(100vh-112px)] overflow-auto", selectedCampaign && "h-[calc(100vh-74px)]")}>
           <div className="w-full max-w-2xl md:max-w-4xl lg:max-w-6xl md:p-3 h-full mx-auto">
-            <Content selectedCampaign={selectedCampaign} setSelectedCampaign={setSelectedCampaign} />
+            <Content selectedCampaign={selectedCampaign} setSelectedCampaign={setSelectedCampaign} name={userData?.name ?? ""} />
           </div>
         </main>
       </div>
@@ -118,8 +125,39 @@ export default function App() {
   );
 }
 
-function Content({selectedCampaign, setSelectedCampaign}: {selectedCampaign: Id<"campaigns"> | null, setSelectedCampaign: (id: Id<"campaigns"> | null) => void}) {
-  const { isAuthenticated, isLoading } = useConvexAuth();
+function NameForm() {
+  const submitName = useMutation(api.auth.submitName);
+  return (
+    <div className="flex flex-col gap-2 min-h-screen items-center justify-center pb-16">
+      <h1 className="text-3xl font-bold text-yellow-900 mb-2">Enter your name</h1>
+      <h4 className="text-yellow-700 mb-3">So the tale may remember you.</h4>
+      <form className="flex flex-col gap-2  max-w-[320px] sm:max-w-[420px] mx-auto" onSubmit={(e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target as HTMLFormElement);
+        const name = formData.get("name");
+        if (!name) return;
+        void submitName({ name: name.toString() });
+      }}>
+        <input
+            className="rounded-lg border border-yellow-300 px-4 py-2 bg-yellow-50 text-yellow-900 placeholder-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-600 transition"
+            type="text"
+            name="name"
+            placeholder="Enter your name"
+            required
+          />
+        <button
+          className="px-4 py-2 rounded-lg transition-colors bg-yellow-500 text-white"
+          type="submit"
+        >
+          Submit
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function Content({selectedCampaign, setSelectedCampaign, name}: {selectedCampaign: Id<"campaigns"> | null, setSelectedCampaign: (id: Id<"campaigns"> | null) => void, name: string | null}) {
+  const { isAuthenticated } = useConvexAuth();
 
   const campaigns = useQuery(api.campaigns.getAllCampaign, isAuthenticated ? {} : 'skip')
   const userCampaings = useQuery(api.campaigns.getCampaignUser, isAuthenticated ? {} : 'skip')
@@ -135,8 +173,6 @@ function Content({selectedCampaign, setSelectedCampaign}: {selectedCampaign: Id<
     if (!selectedCampaign) return null;
     return userCampaings?.find(c => c.campaignId === selectedCampaign);
   }, [selectedCampaign, userCampaings]);
-
-  if(!isAuthenticated && !isLoading) return <SignInForm />;
 
   if(!campaigns || !userCampaings) return <div>Loading...</div>;
   
@@ -154,12 +190,12 @@ function Content({selectedCampaign, setSelectedCampaign}: {selectedCampaign: Id<
 
   return (
     <TavernLayout>
-      <div className="mb-6 w-full">
-        <h2 className="text-3xl font-bold text-yellow-900 mb-2">Available Campaigns</h2>
+      <div className="mb-6 w-full pb-4">
+        <h2 className="text-2xl md:text-3xl font-bold text-yellow-900">Welcome {name}</h2>
         <p className="text-yellow-800 mb-4">
           Choose a campaign to join the adventure!
         </p>
-        <div>
+        <div className="flex flex-col gap-2 md:gap-4">
           {campaigns.length === 0 && (
             <div className="text-yellow-700 w-full">No campaigns yet. (Add via DB for now)</div>
           )}
@@ -192,6 +228,8 @@ function Content({selectedCampaign, setSelectedCampaign}: {selectedCampaign: Id<
               createdAt={c._creationTime}
               isUserInCampaign={isUserInCampaign}
               isFinished={c.isFinished}
+              endingStory={c.endingStory}
+              backgroundStory={c.background}
             />
           )})}
         </div>
@@ -209,9 +247,12 @@ function CampaignScreen({
   selectedCampaignUser: Doc<"campaignUsers">;
   onBack: () => void;
 }) {
+  const [openUserTab, setOpenUserTab] = useState(false);
   const [isVoting, setIsVoting] = useState(false);
   const steps = useQuery(api.campaigns.getCampaignSteps, { campaignId: selectedCampaignData._id });
   const latestStep = useMemo(() => steps?.[steps?.length - 1], [steps]);
+
+  const allPlayer = useQuery(api.campaigns.getAllCampaignUser, { campaignId: selectedCampaignData._id });
 
   // Scroll to bottom of story-container on steps change
   React.useEffect(() => {
@@ -238,20 +279,39 @@ function CampaignScreen({
   }
 
   return (
-    <div className="h-full flex flex-col gap-2 md:p-6">
+    <div className="relative h-full flex flex-col gap-2 md:p-6">
       <div className="flex items-center justify-between">
-      <button
+        <div className="flex gap-2">
+        <button
         className="px-2 py-1 bg-yellow-200 border border-yellow-700 rounded text-yellow-900 hover:bg-yellow-300"
         onClick={onBack}
       >
-        ← Back to Tavern
+        ←
       </button>
-      <div className="flex gap-4">
+        </div>
+      
+      <div className="flex gap-3">
+      <button className="px-2 py-1 bg-yellow-200 border border-yellow-700 rounded text-yellow-900 hover:bg-yellow-300" onClick={() => setOpenUserTab((prev) => !prev)}>{openUserTab ? 'Hide User List' : 'User List'}</button>
         <div className="bg-yellow-100 border-2 border-yellow-400 rounded-lg px-2 py-1">
         Score {selectedCampaignData.progress?.currentScore}/{selectedCampaignData.progress?.targetScore}
         </div>
       </div>
       </div>
+
+      {allPlayer && openUserTab && <div className="absolute top-10 right-0 w-full md:w-1/2 md:top-16 h-[50vh] bg-yellow-100 border-2 border-yellow-400 rounded-lg p-3 z-10">
+          <div className="text-sm font-semibold items-center justify-between mb-2 grid grid-cols-12 border-b border-yellow-400 pb-2">
+            <p className="col-span-6">Name</p>
+            <p className="col-span-3">Votes</p>
+            <p className="col-span-3">Impacts</p>
+          </div>
+          {allPlayer.map((player) => (
+            <div key={player._id} className=" gap-2 mb-2 grid grid-cols-12 pb-1 border-b border-yellow-400">
+              <p className="col-span-6">{player.name ?? `Player ${player._id.slice(0, 5)}`}</p>
+              <p className="col-span-3">{player.totalVotes}</p>
+              <p className="col-span-3">{player.totalContributions}</p>
+            </div>
+          ))}
+      </div>}
       
       <div className="relative h-full flex flex-col md:flex-row gap-2 w-full">
         {/* Story container: full width */}
@@ -267,11 +327,11 @@ function CampaignScreen({
                 <span className="border-b-2 border-yellow-400 w-full"/>
               </div>
               <p className="text-yellow-800 mt-2">{step.plot}</p>
-              {isResolved && selectedOptions && <div className="relative bg-yellow-200 font-semibold text-yellow-800 mt-2 border-2 border-yellow-400 rounded-lg p-1 px-2">
+              {isResolved && <div className="relative bg-yellow-200 font-semibold text-yellow-800 mt-2 border-2 border-yellow-400 rounded-lg p-1 px-2">
                 <p>{isResolved && selectedOptions && `${selectedOptions.option}`}</p>
                 <div className="flex items-center justify-center gap-2 mt-1">
-                  <p className="text-sm bg-yellow-100 rounded py-0.5 px-2 border border-yellow-400">Total vote : {step.selectedCount}</p>
-                  <p className="text-sm bg-yellow-100 rounded py-0.5 px-2 border border-yellow-400">Story Value: {selectedOptions?.value}</p>
+                  <p className="text-sm bg-yellow-100 rounded py-0.5 px-2 border border-yellow-400">Total Vote : {step.selectedCount}</p>
+                  <p className="text-sm bg-yellow-100 rounded py-0.5 px-2 border border-yellow-400">Story Value: {step.selectedValue}</p>
                 </div>
               </div>}
             </div>
@@ -279,8 +339,23 @@ function CampaignScreen({
         </div>
         {/* Vote container: full width */}
         <div className="w-full min-h-max flex overflow-y-auto py-2 md:p-3">
-          {latestStep && <VotePanel
-          selectedCampaignUser={selectedCampaignUser}
+          {selectedCampaignData.isFinished && <div>
+            <h2 className="text-2xl font-bold text-yellow-900 text-center">Campaign Complete!</h2>
+            <p className="text-yellow-800 text-center">Our Journey has come to an end.</p>
+            <div className="relative border-y py-3 border-yellow-400 text-center my-2">
+              <p>{selectedCampaignData.endingStory}</p>
+            </div>
+            <div className="flex gap-2">
+              <p className="text-sm">
+                Total Chapters: <b>{selectedCampaignData.progress?.currentStep}</b>
+              </p>
+              <p className="text-sm">
+                Total Player: <b>{selectedCampaignData.progress?.totalPlayer}</b>
+              </p>
+            </div>
+          </div>}
+          {latestStep && !selectedCampaignData.isFinished && <VotePanel
+            selectedCampaignUser={selectedCampaignUser}
             options={latestStep.options}
             onVote={handleSelectVote}
             expiresAt={latestStep._creationTime + 60000}

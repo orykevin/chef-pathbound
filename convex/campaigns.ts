@@ -7,6 +7,22 @@ import * as z from 'zod'
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 const VOTE_TIME = 60000;
+const GENRE_LISTS = [
+  "Fantasy",
+  "Mystery",
+  "Horror",
+  "Romance",
+  "Thriller",
+  "Sci-Fi",
+  "Comedy",
+  "Drama",
+  "Cyberpunk",
+  "Post-apocalyptic",
+  "Noir",
+  "Supernatural",
+  "Psychological",
+  "RPG",
+];
 
 export const isAuthenticatedMiddleware = async (ctx: MutationCtx | QueryCtx) => {
   const userId = await getAuthUserId(ctx);
@@ -75,12 +91,16 @@ export const generateCampaign = internalAction({
 
     const prevCampaigns = await ctx.runQuery(api.campaigns.getCampaignHistory);
     const randomDifficulty = difficulty[Math.floor(Math.random() * difficulty.length)];
+    const randomTheme = shuffleArray(GENRE_LISTS)
+    const theme1 = randomTheme[0];
+    const theme2 = randomTheme[1];
     const prompt = `
     Previous Campaigns:
     ${prevCampaigns.map(c => `Name: ${c.name}, Theme: ${c.theme.join(', ')}, Difficulty: ${c.difficulty}`).join('\n')}
     
       You are a campaign generator. Generate a campaign with a name, theme with ${randomDifficulty} difficulty. 
-      - for theme: Use established, recognizable genres such as "High Fantasy," "Cyberpunk," "Space Opera," "Horror," "Western," "Steampunk," etc. Do NOT create complex combinations or invented genres.
+      THEME : ${theme1}, ${theme2}
+      GENERATE :
       - generate name based on the theme/genre generated on 'name' field
       - generate a short background story about campaign on 'background' field
       - for first campaign generation, please create a plot to starting the campaign, please keep plot short up to 3 sentences max on 'plot' field
@@ -107,7 +127,7 @@ export const generateCampaign = internalAction({
 
     await ctx.runMutation(internal.campaigns.createCampaign, {
       name: result.object.name,
-      theme: result.object.theme,
+      theme: [theme1, theme2],
       difficulty: randomDifficulty as "easy" | "medium" | "hard",
       options: result.object.options,
       plot: result.object.plot,
@@ -170,7 +190,23 @@ export const getCampaignSteps = query({
     campaignId: v.id("campaigns"),
   },
   handler: async (ctx, { campaignId }) => {
-    return await ctx.db.query("campaignSteps").withIndex("byCampaign", (q) => q.eq("campaignId", campaignId)).collect();
+    const steps = await ctx.db.query("campaignSteps").withIndex("byCampaign", (q) => q.eq("campaignId", campaignId)).collect();
+    return steps.map(s => ({
+      ...s,
+      options: s.options.map(o => ({
+        id: o.id,
+        option: o.option,
+      }))
+    }));
+  },
+})
+
+export const getPreviousCampaignSteps = query({
+  args: {
+    campaignId: v.id("campaigns"),
+  },
+  handler: async (ctx, { campaignId }) => {
+    return await ctx.db.query("campaignSteps").withIndex("byCampaign", (q) => q.eq("campaignId", campaignId)).take(20);
   },
 })
 
@@ -185,7 +221,7 @@ export const generateCampaignStep = internalAction({
     campaignBackground: v.string(),
   },
   handler: async (ctx, args) => {
-    const prevCampaigns = await ctx.runQuery(api.campaigns.getCampaignSteps, { campaignId: args.campaignId });
+    const prevCampaigns = await ctx.runQuery(api.campaigns.getPreviousCampaignSteps, { campaignId: args.campaignId });
 
     const prompt = `
     You are a campaign story generator of the campaign
@@ -321,6 +357,7 @@ export const resolveStep = internalMutation({
     await ctx.db.patch(campaignStepId, {
       status: "resolved",
       selectedOptionId: Number(selectedOptionId),
+      selectedValue: selectedOption.value,
       selectedCount: selectedCount[Number(selectedOptionId)],
     });
     // update campaign progress
@@ -338,8 +375,12 @@ export const resolveStep = internalMutation({
     }));
     // if current score + selected option value >= target score, set campaign to finished
     if(campaignProgress.currentScore + selectedOption.value >= campaignProgress.targetScore){
-      await ctx.db.patch(campaign._id, {
-        isFinished: true,
+      await ctx.scheduler.runAfter(0, internal.campaigns.generateEndingStory, {
+        campaignId: campaign._id, 
+        campaignName: campaign.name, 
+        campaignTheme: campaign.theme, 
+        campaignDifficulty: campaign.difficulty, 
+        campaignBackground: campaign.background
       });
     }else{
       await ctx.scheduler.runAfter(0, internal.campaigns.generateCampaignStep, 
@@ -354,10 +395,67 @@ export const resolveStep = internalMutation({
         }
       );
     }
-    
     return "Vote resolved";
   },
 })
+
+export const generateEndingStory = internalAction({
+  args:{
+    campaignId: v.id("campaigns"),
+    campaignName: v.string(),
+    campaignTheme: v.array(v.string()),
+    campaignDifficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
+    campaignBackground: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const prevCampaigns = await ctx.runQuery(api.campaigns.getPreviousCampaignSteps, { campaignId: args.campaignId });
+
+    const prompt = `
+    You are a campaign story generator and you will generate a campaign ending story.
+
+    Campaign Name: ${args.campaignName},
+    Campaign Theme: ${args.campaignTheme.join(', ')},
+    Campaign Difficulty: ${args.campaignDifficulty},
+    Campaign Background: ${args.campaignBackground},
+
+    Previous Plot:
+    ${prevCampaigns.map(c => `Chapter ${c.step}: ${c.plot}, Selected option : ${c.options.find(o => o.id === c.selectedOptionId)?.option || ''}`).join('\n')}
+    
+    Generate : a ending story for the campaign with previous plot context, please keep story short up to 3 sentences max on 'ending' field
+    `
+
+    const result = await generateObject({
+      model: model,
+      schema: z.object({
+        ending: z.string(),
+      }),
+      maxRetries: 3,
+      prompt: prompt,
+    })
+
+    await ctx.runMutation(internal.campaigns.setEndingStory, {
+      campaignId: args.campaignId,
+      endingStory: result.object.ending,
+    });
+  },
+})
+
+export const setEndingStory = internalMutation({
+  args: {
+    campaignId: v.id("campaigns"),
+    endingStory: v.string(),
+  },
+  handler: async (ctx, { campaignId, endingStory }) => {
+    const campaign = await ctx.db.get(campaignId);
+    if (!campaign) throw new ConvexError("Campaign not found");
+    if(campaign.isFinished) throw new ConvexError("Campaign is finished");
+
+    await ctx.db.patch(campaignId, {
+      isFinished: true,
+      endingStory,
+    });
+  },
+});
 
 // campaign user
 
@@ -368,12 +466,23 @@ export const getCampaignUser = query({
   },
 });
 
+export const getAllCampaignUser = query({
+  args: {
+    campaignId: v.id("campaigns"),
+  },
+  handler: async (ctx, { campaignId }) => {
+    return await ctx.db.query("campaignUsers").withIndex("byCampaignScore", (q) => q.eq("campaignId", campaignId)).order("desc").collect();
+  },
+});
+
 export const userJoinCampaign = mutation({
   args: {
     campaignId: v.id("campaigns"),
   },
   handler: async (ctx, { campaignId }) => {
     const userId = await isAuthenticatedMiddleware(ctx);
+    const userData = await ctx.db.get(userId);
+    if (!userData) throw new ConvexError("User not found");
     const campaign = await ctx.db.get(campaignId);
     if (!campaign) throw new ConvexError("Campaign not found");
     if (campaign.isFinished) throw new ConvexError("Campaign is finished");
@@ -391,6 +500,7 @@ export const userJoinCampaign = mutation({
       userId,
       totalContributions: 0,
       totalVotes: 0,
+      name: userData.name,
     });
 
     return "Successfully joined campaign";

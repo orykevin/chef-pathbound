@@ -3,7 +3,10 @@ import { Doc, Id } from "../../convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 
-type Option = { option: string; value: number, id: number };
+type Option = { option: string; id: number };
+type StepWithoutOptionValue = Omit<Doc<'campaignSteps'>, 'options'> & {
+  options: Omit<Doc<'campaignSteps'>['options'][number], 'value'>[];
+};
 type VotePanelProps = {
   selectedCampaignUser: Doc<'campaignUsers'>;
   options: Option[];
@@ -11,7 +14,7 @@ type VotePanelProps = {
   expiresAt: number;
   resolvedOption: number | null | undefined;
   isResolved: boolean;
-  currentStep: Doc<'campaignSteps'>;
+  currentStep: StepWithoutOptionValue;
   isVoting: boolean;
 };
 
@@ -37,12 +40,12 @@ export function VotePanel({
     return () => clearInterval(interval);
   }, [expiresAt, isResolved]);
 
+
   return (
     <div className="">
       <div className="flex justify-between items-center mb-2">
-        <span className="font-bold text-yellow-800">Vote for the next action!</span>
-        <span className="text-sm text-yellow-700">
-          {isResolved ? "Voting ended" : `Time left: ${timeLeft}s`}
+        <span className="font-bold text-yellow-800">
+          {isResolved ? "The story continues... Get ready for the next path!" : currentStep.status === "pending" ? "Choose a path now to help continue the campaign!" : "Choose the path wisely to lead the campaign!"}
         </span>
       </div>
       <div>
@@ -57,7 +60,7 @@ export function VotePanel({
 
           return (
             <div className="w-full my-2">
-              <div className="relative w-full h-5 bg-yellow-100 rounded-full overflow-hidden border border-yellow-300">
+              <div className="relative w-full h-4 bg-yellow-100 rounded-full overflow-hidden border border-yellow-300 text-xs md:text-sm md:h-5">
                 <div
                   className="absolute left-0 top-0 h-full bg-gradient-to-r from-yellow-400 to-yellow-200 transition-all"
                   style={{ width: `${100 - percent}%` }}
@@ -77,7 +80,7 @@ export function VotePanel({
           return(
           <button
             key={opt.id}
-            className={`w-full flex items-center gap-2 py-1 px-3 rounded border-2 text-left font-semibold transition-all text-sm border-yellow-400 hover:bg-yellow-200 disabled:opacity-75 disabled:pointer-events-none
+            className={`w-full flex items-center justify-between gap-2 py-1 px-3 rounded border-2 text-left font-semibold transition-all text-sm border-yellow-400 hover:bg-yellow-200 disabled:opacity-75 disabled:pointer-events-none
               ${myVote !== undefined && myVote.selectedOptionId === opt.id ? "border-green-500 bg-yellow-200" : ""}
             `}
             onClick={() => !isResolved && onVote(opt.id)}
