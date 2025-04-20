@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Id } from "../../convex/_generated/dataModel";
+import { cn } from "@/lib/utils";
 
 type CampaignCardProps = {
   id: Id<"campaigns">;
@@ -108,8 +109,8 @@ export function CampaignCard({
           </div>
           <div className="w-full bg-yellow-200 rounded-full h-4 border border-yellow-400 relative">
             <div
-              className="bg-yellow-400 h-4 rounded-full transition-all"
-              style={{ width: `${Math.min(100, Math.round((currentScore / (targetScore || 1)) * 100))}%` }}
+              className={cn("bg-yellow-400 h-4 rounded-full transition-all", currentScore < 0 ? "bg-red-600" : "")}
+              style={{ width: `${Math.min(100, Math.round(((currentScore < 0 ? currentScore * -1 : currentScore) / (targetScore || 1)) * 100))}%` }}
             ></div>
           </div>
         </div>
@@ -131,7 +132,7 @@ export function CampaignCard({
       {/* Recap Modal Popup */}
       {showRecapModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 overflow-auto">
-          <div className="bg-white rounded-xl shadow-2xl p-6 md:p-8 w-[95%] max-w-md relative">
+          <div className="bg-white rounded-xl shadow-2xl p-6 md:p-8 w-[95%] max-w-md relative max-h-[90vh] overflow-y-auto">
             <button
               className="absolute top-3 right-6 text-gray-500 hover:text-gray-800 text-xl font-bold"
               onClick={() => setShowRecapModal(false)}

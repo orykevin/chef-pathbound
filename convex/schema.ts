@@ -46,7 +46,7 @@ const applicationTables = {
     campaignUserId: v.id("campaignUsers"),
     campaignStepId: v.id("campaignSteps"),
     selectedOptionId: v.number(),
-  }).index("byCampaignStep", ["campaignStepId", "userId"]),
+  }).index("byCampaignStep", ["campaignStepId", "userId"]).index("bySelectedOption", ["campaignStepId", "selectedOptionId"]),
 };
 
 export default defineSchema({

@@ -89,7 +89,7 @@ export default function App() {
       <div className="flex flex-1">
         {/* Sidebar overlay for mobile */}
         {sidebarOpen && (
-          <div className="fixed inset-0 z-20 bg-black/40 md:hidden" onClick={() => setSidebarOpen(false)} />
+          <div className="fixed inset-0 z-20 bg-black/40 md:hidden h-[30vh]" onClick={() => setSidebarOpen(false)} />
         )}
         <aside
           className={`fixed z-30 top-0 left-0 h-full w-64 bg-yellow-200 border-r-2 border-yellow-400 p-4 transform transition-transform duration-200 md:hidden ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
@@ -298,19 +298,22 @@ function CampaignScreen({
       </div>
       </div>
 
-      {allPlayer && openUserTab && <div className="absolute top-10 right-0 w-full md:w-1/2 md:top-16 h-[50vh] bg-yellow-100 border-2 border-yellow-400 rounded-lg p-3 z-10">
+      {allPlayer && openUserTab && <div className="absolute top-10 right-0 w-full md:w-1/2 md:top-16 h-[50vh] overflow-y-auto bg-yellow-100 border-2 border-yellow-400 rounded-lg p-3 z-10">
           <div className="text-sm font-semibold items-center justify-between mb-2 grid grid-cols-12 border-b border-yellow-400 pb-2">
             <p className="col-span-6">Name</p>
             <p className="col-span-3">Votes</p>
             <p className="col-span-3">Impacts</p>
           </div>
-          {allPlayer.map((player) => (
-            <div key={player._id} className=" gap-2 mb-2 grid grid-cols-12 pb-1 border-b border-yellow-400">
-              <p className="col-span-6">{player.name ?? `Player ${player._id.slice(0, 5)}`}</p>
-              <p className="col-span-3">{player.totalVotes}</p>
-              <p className="col-span-3">{player.totalContributions}</p>
+          {allPlayer.map((playerCampaign, i) => {
+            const totalVotes = playerCampaign.totalVotes;
+            const totalContributions = playerCampaign.totalContributions;
+            return(
+            <div className=" gap-2 mb-2 grid grid-cols-12 pb-1 border-b border-yellow-400">
+              <p className="col-span-6">{playerCampaign.name ?? `Player ${playerCampaign._id.slice(0, 5)}`}</p>
+              <p className="col-span-3">{totalVotes}</p>
+              <p className="col-span-3">{totalContributions}</p>
             </div>
-          ))}
+          )})}
       </div>}
       
       <div className="relative h-full flex flex-col md:flex-row gap-2 w-full">

@@ -366,11 +366,12 @@ export const resolveStep = internalMutation({
       currentScore: campaignProgress.currentScore + selectedOption.value,
     });
     // update campaign users
-    const allUsers = await ctx.db.query("campaignUsers").withIndex("byCampaign", (q) => q.eq("campaignId", campaign._id)).collect();
-    await Promise.all(allUsers.map(async (user) => {
-      await ctx.db.patch(user._id, {
-        totalContributions: user.totalContributions + selectedOption.value,
-        totalVotes: user.totalVotes + 1,
+    const allVotes = await ctx.db.query("campaignVotes").withIndex("bySelectedOption", (q) => q.eq("campaignStepId", campaignStepId).eq("selectedOptionId", Number(selectedOptionId))).collect();
+    await Promise.all(allVotes.map(async (vote) => {
+      const campaignUser = await ctx.db.get(vote.campaignUserId)
+      if(!campaignUser) return ;
+      await ctx.db.patch(campaignUser._id, {
+        totalContributions: campaignUser.totalContributions + selectedOption.value,
       });
     }));
     // if current score + selected option value >= target score, set campaign to finished
