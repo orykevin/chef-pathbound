@@ -51,7 +51,16 @@ export default function App() {
     return () => clearInterval(interval);
   }, [campaigns]);
 
-  if(isLoading) return <div>Loading...</div>;
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-yellow-100 backdrop-blur-sm">
+        <div className="flex flex-col items-center gap-2">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-700"></div>
+          <span className="text-yellow-700 font-medium">Loading...</span>
+        </div>
+      </div>
+    );
+  }
 
   if(!isAuthenticated && !isLoading) return <SignInForm />;
   
@@ -174,7 +183,12 @@ function Content({selectedCampaign, setSelectedCampaign, name}: {selectedCampaig
     return userCampaings?.find(c => c.campaignId === selectedCampaign);
   }, [selectedCampaign, userCampaings]);
 
-  if(!campaigns || !userCampaings) return <div>Loading...</div>;
+  if(!campaigns || !userCampaings) return(
+    <div className="flex flex-col items-center gap-2">
+    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-700"></div>
+    <span className="text-yellow-700 font-medium">Loading...</span>
+  </div>
+  )
   
   if (selectedCampaign && selectedCampaignData && selectedCampaignUser) {
     return (
