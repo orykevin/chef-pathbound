@@ -375,13 +375,16 @@ export const resolveStep = internalMutation({
       });
     }));
     // if current score + selected option value >= target score, set campaign to finished
-    if(campaignProgress.currentScore + selectedOption.value >= campaignProgress.targetScore){
+    const isGoodEnding = campaignProgress.currentScore + selectedOption.value >= campaignProgress.targetScore
+    const isBadEnding = campaignProgress.currentScore + selectedOption.value === (campaignProgress.targetScore * -1)
+    if(isGoodEnding || isBadEnding){
       await ctx.scheduler.runAfter(0, internal.campaigns.generateEndingStory, {
         campaignId: campaign._id, 
         campaignName: campaign.name, 
         campaignTheme: campaign.theme, 
         campaignDifficulty: campaign.difficulty, 
-        campaignBackground: campaign.background
+        campaignBackground: campaign.background,
+        isGoodEnding : isGoodEnding,
       });
     }else{
       await ctx.scheduler.runAfter(0, internal.campaigns.generateCampaignStep, 
@@ -407,6 +410,7 @@ export const generateEndingStory = internalAction({
     campaignTheme: v.array(v.string()),
     campaignDifficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
     campaignBackground: v.string(),
+    isGoodEnding: v.boolean(),
   },
   handler: async (ctx, args) => {
     const prevCampaigns = await ctx.runQuery(api.campaigns.getPreviousCampaignSteps, { campaignId: args.campaignId });
@@ -422,7 +426,7 @@ export const generateEndingStory = internalAction({
     Previous Plot:
     ${prevCampaigns.map(c => `Chapter ${c.step}: ${c.plot}, Selected option : ${c.options.find(o => o.id === c.selectedOptionId)?.option || ''}`).join('\n')}
     
-    Generate : a ending story for the campaign with previous plot context, please keep story short up to 3 sentences max on 'ending' field
+    Generate : a ${args.isGoodEnding ? 'good' : 'bad'} ending story for the campaign with previous plot context, please keep story short up to 3 sentences max on 'ending' field
     `
 
     const result = await generateObject({

@@ -145,10 +145,10 @@ export function CampaignCard({
               <h2 className="text-lg font-semibold mb-2">Background Story :</h2>
               <p className="text-yellow-900">{backgroundStory}</p>
             </div>
-            <div className="text-yellow-800 mb-4">
-              {isFinished && <h2 className="text-lg font-semibold mb-2">Ending Story :</h2>}
-              <p className="text-yellow-900">{isFinished ? endingStory : backgroundStory}</p>
-            </div>
+            {isFinished && <div className="text-yellow-800 mb-4">
+              <h2 className="text-lg font-semibold mb-2">Ending Story :</h2>
+              <p className="text-yellow-900">{endingStory}</p>
+            </div>}
             
             <button
               className="mt-2 px-4 py-2 bg-yellow-300 hover:bg-yellow-400 text-yellow-900 font-semibold rounded-lg border border-yellow-500 transition-all"
